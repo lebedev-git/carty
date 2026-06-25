@@ -18,6 +18,8 @@
  * остальной конвейер.
  */
 
+import https from 'node:https';
+import http from 'node:http';
 import { chatJSON } from '../llm.js';
 import { webSearch, isSearchEnabled, type SearchResult } from '../search.js';
 import type { DeckProfile } from '../types.js';
@@ -31,34 +33,63 @@ const RUSSIAN_NEWS_DOMAINS = [
   'bfm.ru', 'expert.ru', 'rb.ru'
 ];
 
-/** Проверка доступности URL по HTTP. */
-async function checkUrlAlive(url: string): Promise<boolean> {
-  if (!url || !/^https?:\/\//i.test(url)) return false;
-  try {
-    const response = await fetch(url, {
-      method: 'GET',
-      signal: AbortSignal.timeout(5000),
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'ru,en-US;q=0.7,en;q=0.3'
+/** Проверка доступности URL по HTTP (использует HTTP/1.1 и закрывает сокет сразу после заголовков). */
+function checkUrlAlive(url: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!url || !/^https?:\/\//i.test(url)) return resolve(false);
+
+    let urlObj: URL;
+    try {
+      urlObj = new URL(url);
+    } catch {
+      return resolve(false);
+    }
+
+    const client = urlObj.protocol === 'https:' ? https : http;
+
+    const req = client.request(
+      url,
+      {
+        method: 'GET',
+        timeout: 5000,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+          'Accept-Language': 'ru,en-US;q=0.7,en;q=0.3'
+        }
+      },
+      (res) => {
+        const statusCode = res.statusCode || 0;
+        // Уничтожаем запрос сразу после считывания заголовков, чтобы не скачивать все тело страницы
+        req.destroy();
+
+        if (statusCode >= 200 && statusCode < 400) {
+          return resolve(true);
+        }
+
+        // Некоторые СМИ блокируют скрапинг (403 Forbidden, 401, 503) при автоматических запросах,
+        // но если домен находится в списке надежных новостных сайтов, мы все равно считаем его валидным.
+        if ([401, 403, 405, 503].includes(statusCode)) {
+          const isKnownNews = RUSSIAN_NEWS_DOMAINS.some((d) => urlObj.hostname.endsWith(d));
+          if (isKnownNews) return resolve(true);
+        }
+
+        resolve(false);
       }
+    );
+
+    // Ловим сетевые ошибки (обрывы сокетов, DNS-ошибки) и предотвращаем падение процесса
+    req.on('error', () => {
+      resolve(false);
     });
 
-    if (response.ok) return true;
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
 
-    // Некоторые СМИ блокируют скрапинг (403 Forbidden, 401, 503) при автоматических запросах,
-    // но если домен находится в списке надежных новостных сайтов, мы все равно считаем его валидным.
-    if ([401, 403, 405, 503].includes(response.status)) {
-      const urlObj = new URL(url);
-      const isKnownNews = RUSSIAN_NEWS_DOMAINS.some((d) => urlObj.hostname.endsWith(d));
-      if (isKnownNews) return true;
-    }
-    return false;
-  } catch {
-    // В случае таймаута, DNS-ошибки или разрыва соединения
-    return false;
-  }
+    req.end();
+  });
 }
 
 const SYSTEM = `Ты — отраслевой аналитик-исследователь. Собираешь банк РЕАЛЬНЫХ проблемных
