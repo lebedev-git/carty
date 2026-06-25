@@ -152,9 +152,10 @@ function buildBlockPrompt(
   profile: DeckProfile,
   block: DeckProfile['functionalBlocks'][number],
   casesPerCell: number,
+  activeClusters: DeckProfile['stakeholderClusters'],
   searchByCluster?: Map<string, SearchResult[]>
 ): string {
-  const clusters = profile.stakeholderClusters
+  const clusters = activeClusters
     .map((c) => {
       const seed = profile.matrix.find((x) => x.m === block.id && x.c === c.id)?.seedThemes ?? [];
       const head = `  - ${c.id} «${c.name}» (${c.question})${
@@ -165,7 +166,7 @@ function buildBlockPrompt(
       const found = results
         .map((r, i) => `      [${i + 1}] ${r.title}\n          URL: ${r.url}\n          ${r.snippet.slice(0, 300)}`)
         .join('\n');
-      return `${head}\n    Результаты веб-поиска (используй их и ставь точный URL в source):\n${found}`;
+      return `${head}\n    Результаты веб-поиска (используй их и ставь точный URL in source):\n${found}`;
     })
     .join('\n');
 
@@ -189,7 +190,7 @@ ${clusters}
 СТОП-ЛИСТ (запрещено): ${profile.tabooList.join('; ')}
 
 ${intro}
-Всего кейсов: ${profile.stakeholderClusters.length * casesPerCell}.
+Всего кейсов: ${activeClusters.length * casesPerCell}.
 Верни строго JSON:
 {
   "cases": [
@@ -257,13 +258,24 @@ async function sourceCasesForBlock(
       }
     }
   }
+
+  // Фильтруем кластеры: оставляем только кластеры с результатами поиска (если поиск включен).
+  const activeClusters = isSearchEnabled()
+    ? profile.stakeholderClusters.filter((c) => (searchByCluster.get(c.id)?.length ?? 0) > 0)
+    : profile.stakeholderClusters;
+
+  // Если для данного блока нет активных кластеров (не нашли новостей), не генерируем ничего для этого блока.
+  if (activeClusters.length === 0) {
+    return [];
+  }
+
   const grounded = searchByCluster.size > 0;
 
   // 2. Извлечение/синтез кейсов моделью.
   const res = await chatJSON<BlockResult>(
     [
       { role: 'system', content: systemPrompt || SYSTEM },
-      { role: 'user', content: buildBlockPrompt(profile, block, casesPerCell, searchByCluster) },
+      { role: 'user', content: buildBlockPrompt(profile, block, casesPerCell, activeClusters, searchByCluster) },
     ],
     { temperature: grounded ? 0.4 : 0.6, retries: 2, validate: validateBlock }
   );
@@ -326,14 +338,14 @@ export const SOURCER_STAGE = {
   defaultSystem: SYSTEM,
   buildUserExample: (profile: DeckProfile) =>
     profile.functionalBlocks[0]
-      ? buildBlockPrompt(profile, profile.functionalBlocks[0], DEFAULT_CASES_PER_CELL)
+      ? buildBlockPrompt(profile, profile.functionalBlocks[0], DEFAULT_CASES_PER_CELL, profile.stakeholderClusters)
       : '(пример появится после генерации ядра)',
 };
 
 /** Запускает Стадию 1: проходит по функциональным блокам матрицы и собирает банк кейсов. */
 export async function runSourcer(
   profile: DeckProfile,
-  opts: { casesPerCell?: number; systemPrompt?: string; onProgress?: ProgressFn } = {}
+  opts: { casesPerCell?: number; systemPrompt?: string; onProgress?: ProgressFn; minRequiredCases?: number } = {}
 ): Promise<RawCaseInput[]> {
   const casesPerCell = opts.casesPerCell ?? DEFAULT_CASES_PER_CELL;
   const all: RawCaseInput[] = [];
@@ -354,6 +366,12 @@ export async function runSourcer(
     all.push(...cases);
   }
 
-  if (all.length === 0) throw new Error('не удалось собрать ни одного кейса');
+  const minRequired = opts.minRequiredCases ?? 36;
+  if (all.length < minRequired) {
+    throw new Error(
+      `Собрано слишком мало реальных новостных кейсов (всего ${all.length}, требуется минимум ${minRequired}). ` +
+      `Пожалуйста, скорректируйте темы в профайлере или пересоберите матрицу (задайте более широкие/поисковые ключевые слова).`
+    );
+  }
   return all;
 }
