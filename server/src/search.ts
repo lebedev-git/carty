@@ -41,20 +41,38 @@ function normalize(r: any): SearchResult | null {
   return { title: title || url, url, snippet };
 }
 
+export interface SearchOptions {
+  startDate?: string;
+  endDate?: string;
+  includeDomains?: string[];
+}
+
 /** Один запрос к Tavily с мягким бэкоффом на 429. Ошибки не валят стадию — возвращаем []. */
-async function tavilySearch(query: string, maxResults: number): Promise<SearchResult[]> {
+async function tavilySearch(
+  query: string,
+  maxResults: number,
+  options?: SearchOptions
+): Promise<SearchResult[]> {
   const key = process.env.TAVILY_API_KEY?.trim();
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (key) headers.Authorization = `Bearer ${key}`;
   else headers['X-Tavily-Access-Mode'] = 'keyless'; // старт без ключа (ограниченный режим)
 
-  const body = JSON.stringify({
+  const bodyParams: Record<string, any> = {
     query,
     search_depth: 'advanced',
     max_results: maxResults,
     include_answer: false,
     include_raw_content: false,
-  });
+  };
+
+  if (options?.startDate) bodyParams.start_date = options.startDate;
+  if (options?.endDate) bodyParams.end_date = options.endDate;
+  if (options?.includeDomains && options.includeDomains.length > 0) {
+    bodyParams.include_domains = options.includeDomains;
+  }
+
+  const body = JSON.stringify(bodyParams);
 
   const RETRIES = 2;
   for (let attempt = 0; ; attempt++) {
@@ -81,7 +99,11 @@ async function tavilySearch(query: string, maxResults: number): Promise<SearchRe
  * Поиск по запросу. Возвращает до maxResults реальных результатов.
  * При выключенном провайдере или сбое — пустой массив (стадия решает, что делать).
  */
-export async function webSearch(query: string, maxResults = 4): Promise<SearchResult[]> {
+export async function webSearch(
+  query: string,
+  maxResults = 4,
+  options?: SearchOptions
+): Promise<SearchResult[]> {
   if (getProvider() === 'none') return [];
-  return tavilySearch(query, maxResults);
+  return tavilySearch(query, maxResults, options);
 }
