@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Environment files (sensitive data)
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Database files
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+server/carty.db*
+
+# Logs
+*.log
+_mon.log
+server/server.log
+server/_boot.log
+server/_dev_server.log
+server/_live.log
+server/_live_server.log
+server/_run_server.log
+server/_srv.log
+web/_dev_web.log
+web/_live.log
+web/_live_web.log
+web/_run_web.log
+web/_vite.log
+
+# Build & Cache
+dist/
+**/dist/
+build/
+.tsbuildinfo
+*.tsbuildinfo
+.codex/
+.playwright-mcp/
+.agents/
+
+# OS/System files
+.DS_Store
+Thumbs.db

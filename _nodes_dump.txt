@@ -1,0 +1,846 @@
+==========================================================================================
+NODE: Append row in sheet1 | type=googleSheets | tv=4.7
+op=append | doc=МАЯК Артек | sheet=Промты для поиска
+  columns={"Number": "={{ $json['номер'] }}", "Prompt": "={{ $json['промпт'] }}"}
+==========================================================================================
+NODE: OpenRouter Chat Model | type=lmChatOpenRouter | tv=1
+{"model": "google/gemini-3.1-pro-preview", "options": {"responseFormat": "json_object"}}
+==========================================================================================
+NODE: AI Agent | type=agent | tv=3
+[promptType]define
+[text]
+={{ $json["Создание Базовых промтов"] }}
+[systemMessage]
+={{ $json["Тема колоды"] }}
+{{ $json["Аудитория"] }}
+{{ $json['Ядро'] }}
+{{ $json["Инструкция"] }}
+
+==========================================================================================
+NODE: Code in JavaScript | type=code | tv=2
+[jsCode]
+const input = $input.first().json;
+
+let parsed;
+if (typeof input.output === 'string') {
+  parsed = JSON.parse(input.output); // здесь уже массив строк
+} else {
+  parsed = input.output;
+}
+
+if (!Array.isArray(parsed)) {
+  throw new Error('Expected array of prompts');
+}
+
+// Собираем весь промпт в одну строку
+return parsed.map((prompt, index) => ({
+  json: {
+    номер: index + 1,
+    промпт: prompt // если нужно красиво, можно без JSON.stringify
+    // или промпт: JSON.stringify(prompt, null, 2) если дальше нужен именно текст с экранированием
+  }
+}));
+
+==========================================================================================
+NODE: Google Sheets Trigger1 | type=googleSheetsTrigger | tv=1
+doc=МАЯК Артек | sheet=Базовые промты | poll={'item': [{'mode': 'everyMinute'}]}
+==========================================================================================
+NODE: Google Sheets Trigger2 | type=googleSheetsTrigger | tv=1
+doc=МАЯК Артек | sheet=Базовые промты | poll={'item': [{'mode': 'everyMinute'}]}
+==========================================================================================
+NODE: AI Agent1 | type=agent | tv=3
+[promptType]define
+[text]
+={{ JSON.stringify($json.data, null, 2) }}
+[systemMessage]
+={{ $('Google Sheets Trigger1').item.json["Тема колоды"] }}
+{{ $('Google Sheets Trigger1').item.json["Аудитория"] }}
+{{ $('Google Sheets Trigger1').item.json['Валидация'] }}
+{{ $('Google Sheets Trigger1').item.json["Инструкция"] }}
+==========================================================================================
+NODE: OpenRouter Chat Model1 | type=lmChatOpenRouter | tv=1
+{"model": "google/gemini-3-flash-preview", "options": {"responseFormat": "json_object"}}
+==========================================================================================
+NODE: Aggregate | type=aggregate | tv=1
+agg={"aggregate": "aggregateAllItemData", "destinationFieldName": "=data", "include": "allFieldsExcept", "fieldsToExclude": "Оценка, Аналитика, Оценка, ТИП, row_number, Ссылка, Статус, col_10, Тип проблемы", "options": {}}
+==========================================================================================
+NODE: Code in JavaScript2 | type=code | tv=2
+[jsCode]
+// 1. Получаем входные данные
+const rawOutput = $input.first().json.output;
+let allCases = [];
+
+// 2. Блок парсинга
+try {
+  if (typeof rawOutput === 'object' && rawOutput !== null) {
+    allCases = Array.isArray(rawOutput) ? rawOutput : [rawOutput];
+  } else if (typeof rawOutput === 'string') {
+    const parsed = JSON.parse(rawOutput);
+    allCases = Array.isArray(parsed) ? parsed : [parsed];
+  }
+} catch (e) {
+  // Попытка "хирургии"
+  try {
+    if (typeof rawOutput === 'string') {
+      const lastBraceIndex = rawOutput.lastIndexOf('}');
+      if (lastBraceIndex !== -1) {
+        const fixedString = rawOutput.substring(0, lastBraceIndex + 1) + ']';
+        const parsed = JSON.parse(fixedString);
+        allCases = Array.isArray(parsed) ? parsed : [parsed];
+      }
+    }
+  } catch (e2) {
+    // Критическая ошибка - возвращаем диагностику
+    return [{
+      json: {
+        error: 'Parsing failed',
+        rawType: typeof rawOutput,
+        rawSample: String(rawOutput).substring(0, 200)
+      }
+    }];
+  }
+}
+
+// 3. Проверка что allCases - массив
+if (!Array.isArray(allCases)) {
+  return [{
+    json: {
+      error: 'Data is not an array',
+      dataType: typeof allCases,
+      data: allCases
+    }
+  }];
+}
+
+// 4. Вспомогательная функция
+const getValue = (item, possibleKeys) => {
+  for (let key of possibleKeys) {
+    if (item.hasOwnProperty(key) && item[key] !== undefined && item[key] !== null) {
+      return item[key];
+    }
+  }
+  return "";
+};
+
+// 5. Маппинг данных
+return allCases.map(item => ({
+  json: {
+    номер: getValue(item, ["№", "Номер", "number", "card_id", "id"]),
+    аналитика: getValue(item, ["Аналитика", "analytics", "text", "description"]),
+    оценка: getValue(item, ["Оценка", "score", "rating"]),
+    группа: getValue(item, ["Группа", "group", "category"])
+  }
+}));
+
+==========================================================================================
+NODE: Update row in sheet | type=googleSheets | tv=4.7
+op=update | doc=МАЯК Артек | sheet=Кейсы(валидрованные)
+  columns={"Номер": "={{ $json['номер'] }}", "Тип проблемы": "=", "Аналитика": "={{ $json['аналитика'] }}", "Оценка": "={{ $json['оценка'] }}", "ТИП": "={{ $json['группа'] }}"}
+  matchOn=['Номер']
+==========================================================================================
+NODE: Google Sheets Trigger3 | type=googleSheetsTrigger | tv=1
+doc=МАЯК Артек | sheet=Базовые промты | poll={'item': [{'mode': 'everyMinute'}]}
+==========================================================================================
+NODE: AI Agent2 | type=agent | tv=3
+[promptType]define
+[text]
+={{ JSON.stringify($json.кейсы, null, 2) }}
+[systemMessage]
+={{ $('Google Sheets Trigger3').item.json['Тема колоды'] }}
+{{ $('Google Sheets Trigger3').item.json["Аудитория"] }}
+{{ $('Google Sheets Trigger3').item.json['Генерация карт Я'] }}
+{{ $('Google Sheets Trigger3').item.json['Инструкция'] }}
+
+
+
+
+==========================================================================================
+NODE: OpenRouter Chat Model2 | type=lmChatOpenRouter | tv=1
+{"model": "google/gemini-3.1-pro-preview", "options": {"responseFormat": "json_object"}}
+==========================================================================================
+NODE: Get row(s) in sheet1 | type=googleSheets | tv=4.7
+op=None | doc=МАЯК Артек | sheet=Кейсы(валидрованные) (копия)
+==========================================================================================
+NODE: Code in JavaScript3 | type=code | tv=2
+[jsCode]
+const data = JSON.parse($input.first().json.output);
+
+if (!Array.isArray(data)) {
+  throw new Error('После парсинга должен быть массив, получено: ' + typeof data);
+}
+
+return data.map(item => {
+  return {
+    json: {
+      номер_карты: item['№ Порядковый номер карты'] || item['№'] || '',
+      исходный_кейс: item['Номер Исходного кейса'] || item['№ Исходного кейса'] || '',
+      название: item['Название'] || '',
+      тип: item['ТИП'] || item['Луч'] || '',
+      описание: item['Description'] || '',
+      задача: item['Task'] || '',
+      допматериал: item['Доп_материал'] || item['Доп. материал'] || ''
+    }
+  };
+});
+
+==========================================================================================
+NODE: If | type=if | tv=2.2
+conditions={"options": {"caseSensitive": true, "leftValue": "", "typeValidation": "strict", "version": 2}, "conditions": [{"id": "45be9e76-59e0-4d8b-92e6-7e45076fd6fb", "leftValue": "={{ $json['ТИП'] }}", "rightValue": "=Я", "operator": {"type": "string", "operation": "equals"}}], "combinator": "and"}
+==========================================================================================
+NODE: AI Agent3 | type=agent | tv=3
+[promptType]define
+[text]
+={{ JSON.stringify($json.кейсы, null, 2) }}
+[systemMessage]
+={{ $('Google Sheets Trigger3').item.json['Тема колоды'] }}
+{{ $('Google Sheets Trigger3').item.json["Аудитория"] }}
+{{ $('Google Sheets Trigger3').item.json['Генерация карт МЫ'] }}
+{{ $('Google Sheets Trigger3').item.json['Инструкция'] }}
+==========================================================================================
+NODE: OpenRouter Chat Model3 | type=lmChatOpenRouter | tv=1
+{"model": "google/gemini-3.1-pro-preview", "options": {"responseFormat": "json_object"}}
+==========================================================================================
+NODE: Code in JavaScript4 | type=code | tv=2
+[jsCode]
+const rawOutput = $input.first().json.output;
+
+// Парсим строку в массив
+let data;
+try {
+  data = JSON.parse(rawOutput);
+} catch (error) {
+  throw new Error('Не удалось распарсить JSON: ' + error.message);
+}
+
+// Проверяем, что это массив
+if (!Array.isArray(data)) {
+  throw new Error('После парсинга должен быть массив, получено: ' + typeof data);
+}
+
+return data.map(item => ({
+  json: {
+    номер_карты: item['Карта_Id'] || '',
+    исходный_кейс: item['Номер_кейса'] || '',
+    название: item['Название'] || '',
+    луч: item['Луч'] || '',
+    описание: item['Description'] || '',
+    задача: item['Task'] || '',
+    допматериал: item['Доп_материал'] || '',
+    типЗадачи: item['Доп. материал'] || ''
+  }
+}));
+
+==========================================================================================
+NODE: Aggregate1 | type=aggregate | tv=1
+agg={"aggregate": "aggregateAllItemData", "destinationFieldName": "=data", "include": "allFieldsExcept", "fieldsToExclude": "Оценка", "options": {}}
+==========================================================================================
+NODE: Aggregate2 | type=aggregate | tv=1
+agg={"aggregate": "aggregateAllItemData", "destinationFieldName": "=data", "include": "allFieldsExcept", "fieldsToExclude": "Оценка", "options": {}}
+==========================================================================================
+NODE: Append or update row in sheet | type=googleSheets | tv=4.7
+op=appendOrUpdate | doc=МАЯК Артек | sheet=Карты Я
+  columns={"Номер": "={{ $json[\"номер_карты\"] }}", "Исходный кейс": "={{ $json[\"исходный_кейс\"] }}", "Название": "={{ $json[\"название\"] }}", "Тип": "={{ $json[\"тип\"] }}", "Описание": "={{ $json[\"описание\"] }}", "Задание": "={{ $json[\"задача\"] }}", "Допматериал": "={{ $json[\"допматериал\"] }}"}
+  matchOn=['Номер']
+==========================================================================================
+NODE: Append or update row in sheet1 | type=googleSheets | tv=4.7
+op=appendOrUpdate | doc=МАЯК Артек | sheet=Карты МЫ
+  columns={"Номер": "={{ $json[\"номер_карты\"] }}", "Название": "={{ $json[\"название\"] }}", "Описание": "={{ $json[\"описание\"] }}", "Задание": "={{ $json[\"задача\"] }}", "Допматериал": "={{ $json['допматериал'] }}", "Источник": "=", "Исходный кейс": "={{ $json[\"исходный_кейс\"] }}", "Тип": "={{ $json['луч'] }}"}
+  matchOn=['Номер']
+==========================================================================================
+NODE: Code in JavaScript7 | type=code | tv=2
+[jsCode]
+const allCases = $input.first().json.data;
+
+const filtered = allCases.map(item => ({
+  Номер: item['Номер'],
+  Название_кейса: item['Название кейса'],
+  Суть: item['Суть']
+}));
+
+return [{
+  json: {
+    кейсы: filtered
+  }
+}];
+
+==========================================================================================
+NODE: Code in JavaScript8 | type=code | tv=2
+[jsCode]
+const allCases = $input.first().json.data;
+
+const filtered = allCases.map(item => ({
+  Номер: item['Номер'],
+  Название_кейса: item['Название кейса'],
+  Суть: item['Суть']
+}));
+
+return [{
+  json: {
+    кейсы: filtered
+  }
+}];
+
+==========================================================================================
+NODE: AI Agent4 | type=agent | tv=3
+[promptType]define
+[text]
+={{ JSON.stringify($json.data, null, 2) }}
+[systemMessage]
+={{ $('Google Sheets Trigger').item.json["Карты я"] }}
+==========================================================================================
+NODE: OpenRouter Chat Model4 | type=lmChatOpenRouter | tv=1
+{"model": "google/gemini-3-pro-preview", "options": {"responseFormat": "json_object"}}
+==========================================================================================
+NODE: Append or update row in sheet2 | type=googleSheets | tv=4.7
+op=appendOrUpdate | doc=МАЯК ТЕСТ | sheet=Карты Я
+  columns={"Номер": "={{ $json.number }}", "Промт": "={{ $json.prompt }}"}
+  matchOn=['Номер']
+==========================================================================================
+NODE: Google Sheets Trigger | type=googleSheetsTrigger | tv=1
+doc=МАЯК ТЕСТ | sheet=Базовые промты | poll={'item': [{'mode': 'everyMinute'}]}
+==========================================================================================
+NODE: Get row(s) in sheet2 | type=googleSheets | tv=4.7
+op=None | doc=МАЯК ТЕСТ | sheet=Карты Я
+==========================================================================================
+NODE: Aggregate3 | type=aggregate | tv=1
+agg={"aggregate": "aggregateAllItemData", "destinationFieldName": "=data", "include": "allFieldsExcept", "fieldsToExclude": "Промт, row_number, Исходный кейс, Допматериал, Источник", "options": {}}
+==========================================================================================
+NODE: Code in JavaScript1 | type=code | tv=2
+[jsCode]
+// 1. Получаем данные и делаем двойной парсинг
+let rawOutput = $input.first().json.output;
+
+// Первый парсинг: если это JSON-строка массива
+let parsedData;
+try {
+  parsedData = typeof rawOutput === 'string' ? JSON.parse(rawOutput) : rawOutput;
+} catch (e) {
+  parsedData = rawOutput;
+}
+
+// Берем первый элемент, если это массив
+let inputText = Array.isArray(parsedData) ? parsedData[0] : parsedData;
+
+// 2. Разбиваем по разделителю ───
+const blocks = inputText.split(/\n───\n/).filter(b => b.trim());
+
+// 3. Обрабатываем каждый блок
+const results = blocks.map(block => {
+  const lines = block.trim().split('\n\n'); // Используем двойной перенос
+  
+  // Первый элемент - заголовок
+  const headerLine = lines[0] || "";
+  const numberMatch = headerLine.match(/№(\d+)/);
+  const number = numberMatch ? numberMatch[1] : "";
+  
+  // Второй элемент - промпт
+  const prompt = lines[1] || "";
+  
+  // Убираем префикс типа из заголовка
+  const title = headerLine
+    .replace(/^(Текст|Аудио|Изображение|Видео|Интерактив|Данные)\s*№\d+\s*/, '')
+    .trim();
+  
+  return {
+    json: {
+      title: title,
+      number: number,
+      prompt: prompt
+    }
+  };
+});
+
+return results;
+
+==========================================================================================
+NODE: AI Agent5 | type=agent | tv=3
+[promptType]define
+[text]
+={{ JSON.stringify($json.data, null, 2) }}
+[systemMessage]
+={{ $('Google Sheets Trigger4').item.json["Карты МЫ"] }}
+==========================================================================================
+NODE: OpenRouter Chat Model5 | type=lmChatOpenRouter | tv=1
+{"model": "google/gemini-3-pro-preview", "options": {"responseFormat": "json_object"}}
+==========================================================================================
+NODE: Append or update row in sheet3 | type=googleSheets | tv=4.7
+op=appendOrUpdate | doc=МАЯК ТЕСТ | sheet=Карты МЫ
+  columns={"Промт": "={{ $json.prompt }}", "Номер": "={{ $json.number }}"}
+  matchOn=['Номер']
+==========================================================================================
+NODE: Google Sheets Trigger4 | type=googleSheetsTrigger | tv=1
+doc=МАЯК ТЕСТ | sheet=Базовые промты | poll={'item': [{'mode': 'everyMinute'}]}
+==========================================================================================
+NODE: Get row(s) in sheet3 | type=googleSheets | tv=4.7
+op=None | doc=МАЯК ТЕСТ | sheet=Карты МЫ
+==========================================================================================
+NODE: Aggregate4 | type=aggregate | tv=1
+agg={"aggregate": "aggregateAllItemData", "destinationFieldName": "=data", "include": "allFieldsExcept", "fieldsToExclude": "Промт, row_number, Исходный кейс, Допматериал, Источник", "options": {}}
+==========================================================================================
+NODE: Code in JavaScript5 | type=code | tv=2
+[jsCode]
+// 1. Безопасно парсим входные данные
+let rawOutput = $input.first().json.output;
+let inputData;
+try {
+  // Если это строка JSON, парсим её. Если уже объект — оставляем.
+  inputData = typeof rawOutput === 'string' ? JSON.parse(rawOutput) : rawOutput;
+} catch (e) {
+  inputData = []; 
+}
+
+// Вспомогательная функция для очистки промпта от оберток ```text или ```markdown
+function cleanPrompt(text) {
+  if (!text) return "";
+  return text
+    .replace(/^```(markdown|text|json)?\s*/i, '') // Убираем начало ```text
+    .replace(/^```\s*/, '')                        // Убираем просто ```
+    .replace(/\s*```$/, '')                        // Убираем конец ```
+    .trim();
+}
+
+const results = inputData.map(item => {
+  let title = "";
+  let number = "";
+  let prompt = "";
+
+  // === ВАРИАНТ 1: Элемент массива — СТРОКА (Markdown) ===
+  if (typeof item === 'string') {
+    // Сценарий А: Заголовок СНАРУЖИ (Ваш последний пример: "Текст №1...\n\n```text...")
+    // Ищем текст до ```, затем содержимое внутри ```
+    const matchOutside = item.match(/^(.*?)\s*```(?:text|markdown)?\s*([\s\S]*?)\s*```/);
+    
+    // Сценарий Б: Заголовок ВНУТРИ (Ваш предыдущий пример: "```markdown\nТекст №1...\n\n...")
+    // Ищем начало блока, потом заголовок, два переноса, потом промпт
+    const matchInside = item.match(/^```(?:markdown|text)?\s*(.*?)\n\n([\s\S]*?)\s*```/);
+
+    if (matchOutside && !item.trim().startsWith('```')) {
+      // Сработал Сценарий А (заголовок перед кодом)
+      title = matchOutside[1].trim();
+      prompt = matchOutside[2].trim();
+    } else if (matchInside) {
+      // Сработал Сценарий Б (заголовок внутри кода)
+      title = matchInside[1].trim();
+      prompt = matchInside[2].trim();
+    } else {
+      // Если регулярки не сработали, просто чистим текст
+      prompt = cleanPrompt(item);
+    }
+  } 
+  
+  // === ВАРИАНТ 2: Элемент массива — ОБЪЕКТ (JSON) ===
+  else if (typeof item === 'object' && item !== null) {
+    if ('card_id' in item || 'header' in item) {
+      // Формат с card_id
+      title = item.header || "";
+      number = item.card_id || "";
+      prompt = cleanPrompt(item.prompt_code);
+    } else {
+      // Формат с "Номер" и "Промт"
+      title = ""; 
+      number = item["Номер"] || "";
+      prompt = cleanPrompt(item["Промт"]);
+    }
+  }
+
+  // === ФИНАЛЬНАЯ ОБРАБОТКА ===
+  // Если номер не найден в явном поле (card_id/Номер), вытаскиваем его из начала текста промпта
+  if (!number && prompt) {
+    const numMatch = prompt.match(/^(\d+)/);
+    number = numMatch ? numMatch[1] : "";
+  }
+
+  return {
+    json: {
+      title: title,
+      number: number,
+      prompt: prompt
+    }
+  };
+});
+
+return results;
+==========================================================================================
+NODE: AI Agent6 | type=agent | tv=3
+[promptType]define
+[text]
+={{ $json["Номер"] }}
+{{ $json["Название"] }}
+{{ $json["Описание"] }}
+{{ $json["Задание"] }}
+[systemMessage]
+=РОЛЬ И ЗАДАЧА
+Ты - генератор дополнительных материалов для учебного тренажера по работе с ИИ.
+Целевая аудитория: управленческая команда проекта "Московское долголетие"
+
+ВАЖНО: Ты НЕ решаешь задание. Ты создаешь ВХОДНЫЕ материалы (справки, таблицы, сценарии), которые участник будет использовать для решения задачи.
+
+АЛГОРИТМ РАБОТЫ
+Шаг 1: Поиск информации
+Если упомянута реальная компания (Сбербанк, Светофор, АвтоВАЗ, ВкусВилл и т.д.) → ОБЯЗАТЕЛЬНО провести веб-поиск
+
+Искать: реальные новости, события, контекст о компании
+
+Использовать реальные данные как основу, но СТРОГО соблюдать цифры из задания (даже если кажутся нереалистичными)
+
+Шаг 2: Анализ задания
+Определить:
+
+Какой материал нужен? (справка/таблица/сценарий/схема)
+
+Какую информацию он должен содержать?
+
+Шаг 3: Генерация материала
+Строгие лимиты объема:
+
+Любой материал: максимум 2000 символов с пробелами (НЕ ПРЕВЫШАТЬ!)
+
+Таблицы: максимум 15 строк, максимум 4 столбца
+
+ПРАВИЛА ГЕНЕРАЦИИ
+ОБЯЗАТЕЛЬНО:
+Только входные данные - создавать материал для анализа, НЕ решение
+
+Строго соблюдать цифры из задания - не корректировать и не изменять
+
+Реальный контекст где это возможно (или максимально правдоподобный)
+
+Реалистичные детали - номера документов, адреса, ФИО
+
+Язык: русский
+
+Обезличивание - если в задании нет конкретных данных
+
+Контроль объема - не превышать 2000 символов с пробелами
+
+ЗАПРЕЩЕНО:
+Решать задание или давать рекомендации
+
+Писать выводы, заключения, прогнозы, анализ
+
+Добавлять подписи, печати, приложения (если их нет физически)
+
+Указывать даты в документах
+
+Превышать лимит 2000 символов
+
+Писать комментарии вне материала
+
+Писать мета-комментарии ("Примечание для участника", "Используйте эти данные")
+
+Давать рекомендации по решению ("Требуется", "Необходимо сделать")
+
+Использовать провокационные темы (коррупция, острые темы)
+
+Отсылаться к номеру задания или указывать, что данные для адаптации
+
+СТРУКТУРА МАТЕРИАЛОВ
+Справки/Отчеты
+Только разделы с фактическими данными:
+
+Заголовок - название документа
+
+Общая информация - кто, что, контекст
+
+Статистика - ключевые цифры из задания
+
+Детализация - категории, примеры, регионы
+
+Изъятия/меры - если применимо
+
+Описывай факты, не действия
+
+Если в задании есть поручение (написать письмо, составить план) - опиши КОНТЕКСТ и ДАННЫЕ, но не давай инструкций
+
+НЕ включать: заключения, рекомендации, подписи, прогнозы, даты
+
+Таблицы данных
+Реалистичные данные без дат
+
+Максимум 15 строк, максимум 4 столбца
+
+Сортировка по релевантности
+
+Сценарии (для аудио/видео)
+Структура: хронометраж + реплики/действия
+
+Технические указания
+
+Формат диалога или закадрового текста
+
+Что сокращать при приближении к лимиту:
+
+Уменьшить количество примеров в детализации
+
+Сократить описания, оставив факты
+
+Убрать дублирующие данные
+
+НЕ СОКРАЩАТЬ: цифры из задания, структуру документа, источники
+
+ФОРМАТ ВЫВОДА И ОФОРМЛЕНИЕ
+ВАЖНО: Используй Markdown для структурирования документа!
+
+Правила форматирования:
+
+ЗАГОЛОВКИ:
+Основной заголовок документа: ## НАЗВАНИЕ ДОКУМЕНТА
+
+Подзаголовки разделов: ### Название раздела
+
+Обязательно оставляй пустую строку после заголовков
+
+ВЫДЕЛЕНИЕ ТЕКСТА:
+Жирный текст для важных данных: **текст**
+
+Курсив для примечаний: *текст*
+
+Не злоупотребляй выделением - только ключевые цифры и термины
+
+СПИСКИ:
+Маркированные списки: используй дефис с пробелом (- пункт)
+
+Нумерованные списки: используй цифры с точкой (1. пункт)
+
+Каждый пункт с новой строки
+
+Один уровень вложенности (без подпунктов)
+
+ТАБЛИЦЫ:
+Используй Markdown формат таблиц:
+
+| Заголовок 1 | Заголовок 2 | Заголовок 3 |
+|-------------|-------------|-------------|
+| Данные 1    | Данные 2    | Данные 3    |
+
+Первая строка - заголовки
+
+Вторая строка - разделитель (дефисы)
+
+Последующие строки - данные
+
+ПРИМЕРЫ ПРАВИЛЬНОГО ОФОРМЛЕНИЯ
+
+Пример 1: Справка
+
+## СПРАВКА О РЕЗУЛЬТАТАХ ПРОВЕРКИ ООО "КОМПАНИЯ"
+
+### Общие сведения
+
+Проверено объектов: **312**
+Выявлено нарушений: **34 000 000**
+Закрыто магазинов: **76**
+
+### Нарушения по категориям
+
+| Категория | Количество | Доля |
+|-----------|------------|------|
+| Фальсификация | 11 900 000 | 35% |
+| Просрочка | 10 200 000 | 30% |
+| Хранение | 8 500 000 | 25% |
+| Прочее | 3 400 000 | 10% |
+
+### Региональное распределение
+
+Проверки проводились в 8 регионах РФ. Наибольшее количество нарушений выявлено в Центральном федеральном округе.
+
+**Детализация по типам продукции:**
+
+- Молочная продукция: 15 200 000 случаев
+- Мясная продукция: 10 800 000 случаев
+- Кондитерские изделия: 8 000 000 случаев
+
+Пример 2: Детальная таблица
+
+### Детализация нарушений
+
+| № | Магазин | Адрес | Тип нарушения | Продукт | Объем |
+|---|---------|-------|---------------|---------|-------|
+| 1 | Светофор №45 | г. Москва, ул. Ленина, 12 | Просрочка | Молоко | 45 кг |
+| 2 | Светофор №78 | г. СПб, пр. Мира, 34 | Фальсификат | Сметана | 89 кг |
+| 3 | Светофор №12 | г. Казань, ул. Баумана, 56 | Хранение | Творог | 67 кг |
+
+РАЗРЕШЕННЫЕ ЭЛЕМЕНТЫ MARKDOWN:
+## для основного заголовка
+
+### для подзаголовков
+
+**текст** для жирного выделения
+
+*текст* для курсива
+
+- для маркированных списков
+
+1. для нумерованных списков
+
+| для таблиц
+
+ЗАПРЕЩЕННЫЕ ЭЛЕМЕНТЫ:
+# одинарная решетка (используй ## или ###)
+
+__подчеркивания__ для выделения (используй **)
+
+` обратные кавычки для кода
+
+> угловые скобки для цитат
+
+--- горизонтальные линии
+
+[ссылки](url)
+
+![изображения](url)
+
+ВАЖНО: Всегда проверяй итоговый объем - не более 2000 символов с пробелами!
+
+==========================================================================================
+NODE: OpenRouter Chat Model6 | type=lmChatOpenRouter | tv=1
+{"model": "google/gemini-3-flash-preview", "options": {"responseFormat": "text"}}
+==========================================================================================
+NODE: Google Sheets Trigger5 | type=googleSheetsTrigger | tv=1
+doc=Законодательная власть | sheet=Лист9 | poll={'item': [{'mode': 'everyMinute'}]}
+==========================================================================================
+NODE: Loop Over Items | type=splitInBatches | tv=3
+{"options": {"reset": false}}
+==========================================================================================
+NODE: Wait | type=wait | tv=1.1
+{}
+==========================================================================================
+NODE: Get row(s) in sheet5 | type=googleSheets | tv=4.7
+op=None | doc=МАЯК Артек | sheet=Кейсы(валидрованные)
+==========================================================================================
+NODE: HTTP Request | type=httpRequest | tv=4.3
+method=POST url==https://docs.googleapis.com/v1/documents/{{ $('Create a document').item.json.id }}:batchUpdate
+body="={{ { requests: $json.requests } }}"
+opts={}
+sendBody=True contentType=None bodyType=json
+FULL={"method": "POST", "url": "=https://docs.googleapis.com/v1/documents/{{ $('Create a document').item.json.id }}:batchUpdate", "authentication": "genericCredentialType", "genericAuthType": "oAuth2Api", "sendBody": true, "specifyBody": "json", "jsonBody": "={{ { requests: $json.requests } }}", "options": {}}
+==========================================================================================
+NODE: Markdown | type=markdown | tv=1
+md={"mode": "markdownToHtml", "markdown": "={{ $('AI Agent6').item.json.output }}", "destinationKey": "html", "options": {}}
+==========================================================================================
+NODE: Code in JavaScript6 | type=code | tv=2
+[jsCode]
+const html = $input.first().json.html || '';
+const documentId = $input.first().json.id; // ✅ было .documentId — не работало
+
+let plainText = html
+  .replace(/<h2>(.*?)<\/h2>/g, '\n\n###H2###$1###H2END###\n')
+  .replace(/<h3>(.*?)<\/h3>/g, '\n###H3###$1###H3END###\n')
+  .replace(/<strong>(.*?)<\/strong>/g, '###BOLD###$1###BOLDEND###')
+  .replace(/<p>/g, '')
+  .replace(/<\/p>/g, '\n')
+  .replace(/<ul>/g, '').replace(/<\/ul>/g, '')
+  .replace(/<ol>/g, '').replace(/<\/ol>/g, '')
+  .replace(/<li>/g, '• ').replace(/<\/li>/g, '\n')
+  .replace(/<table>/g, '').replace(/<\/table>/g, '\n')
+  .replace(/<tr>/g, '').replace(/<\/tr>/g, '\n')
+  .replace(/<td>/g, '').replace(/<\/td>/g, ' | ')
+  .replace(/<th>/g, '').replace(/<\/th>/g, ' | ')
+  .replace(/<br\s*\/?>/g, '\n')
+  .replace(/\n{3,}/g, '\n\n')
+  .trim();
+
+const requests = [];
+
+const cleanText = plainText
+  .replace(/###H2###/g, '').replace(/###H2END###/g, '')
+  .replace(/###H3###/g, '').replace(/###H3END###/g, '')
+  .replace(/###BOLD###/g, '').replace(/###BOLDEND###/g, '');
+
+requests.push({
+  insertText: { location: { index: 1 }, text: cleanText }
+});
+
+const h2Regex = /###H2###(.*?)###H2END###/g;
+let match;
+while ((match = h2Regex.exec(plainText)) !== null) {
+  const headerText = match[1];
+  const startIndex = cleanText.indexOf(headerText);
+  if (startIndex >= 0) {
+    requests.push({
+      updateParagraphStyle: {
+        range: { startIndex: startIndex + 1, endIndex: startIndex + 1 + headerText.length },
+        paragraphStyle: { namedStyleType: 'HEADING_2' },
+        fields: 'namedStyleType'
+      }
+    });
+  }
+}
+
+const h3Regex = /###H3###(.*?)###H3END###/g;
+while ((match = h3Regex.exec(plainText)) !== null) {
+  const headerText = match[1];
+  const startIndex = cleanText.indexOf(headerText);
+  if (startIndex >= 0) {
+    requests.push({
+      updateParagraphStyle: {
+        range: { startIndex: startIndex + 1, endIndex: startIndex + 1 + headerText.length },
+        paragraphStyle: { namedStyleType: 'HEADING_3' },
+        fields: 'namedStyleType'
+      }
+    });
+  }
+}
+
+const boldRegex = /###BOLD###(.*?)###BOLDEND###/g;
+let offset = 0;
+const cleanTextForBold = plainText.replace(/###H2###|###H2END###|###H3###|###H3END###/g, '');
+while ((match = boldRegex.exec(cleanTextForBold)) !== null) {
+  const boldText = match[1];
+  const startIndex = cleanText.indexOf(boldText, offset);
+  if (startIndex >= 0) {
+    requests.push({
+      updateTextStyle: {
+        range: { startIndex: startIndex + 1, endIndex: startIndex + 1 + boldText.length },
+        textStyle: { bold: true },
+        fields: 'bold'
+      }
+    });
+    offset = startIndex + boldText.length;
+  }
+}
+
+return {
+  json: {
+    documentId,
+    requests // ✅ было JSON.stringify — не работало в n8n 4.3
+  }
+};
+
+==========================================================================================
+NODE: Create a document | type=googleDocs | tv=2
+gdocs={"folderId": "1SVZwHCxAbxdRIJjog2n4LO62bSvavX1H", "title": "=Справочный материал - {{ $now.format('dd.MM.yyyy HH:mm') }}"}
+==========================================================================================
+NODE: Code in JavaScript9 | type=code | tv=2
+[jsCode]
+const rawOutput = $input.first().json.output;
+
+// Парсим строку в массив
+let data;
+try {
+  data = JSON.parse(rawOutput);
+} catch (error) {
+  throw new Error('Не удалось распарсить JSON: ' + error.message);
+}
+
+// Проверяем, что это массив
+if (!Array.isArray(data)) {
+  throw new Error('После парсинга должен быть массив, получено: ' + typeof data);
+}
+
+return data.map(item => ({
+  json: {
+    номер_карты: item['Карта_Id'] || '',
+    исходный_кейс: item['Номер_кейса'] || '',
+    название: item['Название'] || '',
+    луч: item['Луч'] || '',
+    описание: item['Description'] || '',
+    задача: item['Task'] || '',
+    допматериал: item['Доп_материал'] || '',
+    типЗадачи: item['Доп. материал'] || ''
+  }
+}));
+
+==========================================================================================
+NODE: Edit Fields | type=set | tv=3.4
+{"assignments": {"assignments": [{"id": "373d5a19-58ef-4fa8-b710-8c7d722c0420", "name": "", "value": "[{\"№ Исходного кейса\": 17, \"№\": 1, \"Название\": \"Наставники будущего\", \"Луч\": \"Знание и навыки\", \"Description\": \"Запланировано открытие Высшей школы педагогики. Текущий кадровый резерв с трудом закрывает летние смены, а методисты управлений перегружены текучкой. Возникает стратегический разрыв: нам нужно готовить эталонных наставников для всей страны, но базируемся мы на тех, кто выгорел в режиме нон-стоп.\", \"Task\": \"Спроектируйте многоуровневую матрицу компетенций для будущих преподавателей Школы. Опишите три грейда профессионализма и механизмы перехода из рядовых сотрудников в эксперты.\", \"Доп. материал\": \"Трансформация\"},{\"№ Исходного кейса\": 5, \"№\": 2, \"Название\": \"Конвейер вожатых\", \"Луч\": \"Знание и навыки\", \"Description\": \"Система держится на ротации практикантов: первая смена уходит на адаптацию, вторая на работу, затем они уезжают. Опытные сотрудники постоянно обучают новичков без компенсации. Нагрузка в пик сезона удваивается, что делает невозможным удержание сильных педагогов, превращая лагерь в тренировочную базу.\", \"Task\": \"Разработайте комплексный маршрут профессионального развития для практикантов, позволяющий ускорить их адаптацию до трех дней. Включите механизмы мотивации для снижения нагрузки на наставников.\", \"Доп. материал\": \"Генерация\"},{\"№ Исходного кейса\": 31, \"№\": 3, \"Название\": \"Нормативы и жизнь\",

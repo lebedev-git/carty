@@ -1,0 +1,114 @@
+/* Шрифт интерфейса (с системным фолбэком на случай оффлайна) */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import 'tailwindcss';
+
+/*
+ * Фирменная светлая премиум-палитра «Маяк / Золотой луч»:
+ *  navy — чернильно-синие и серо-голубые тона (основа, текст, глубокие контрасты)
+ *  beam — благородный золотисто-янтарный луч (акценты, CTA)
+ *  sea  — изумрудно-тиловая волна (успех, активные статусы, командные элементы)
+ */
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --color-navy-50: #f8fafc;
+  --color-navy-100: #f1f5f9;
+  --color-navy-200: #e2e8f0;
+  --color-navy-300: #cbd5e1;
+  --color-navy-400: #94a3b8;
+  --color-navy-500: #64748b;
+  --color-navy-600: #475569;
+  --color-navy-700: #334155;
+  --color-navy-800: #1e293b;
+  --color-navy-900: #0f172a;
+  --color-navy-950: #020617;
+
+  --color-beam-50: #fefdf0;
+  --color-beam-100: #fef3c7;
+  --color-beam-200: #fde68a;
+  --color-beam-300: #fcd34d;
+  --color-beam-400: #fbbf24;
+  --color-beam-500: #f59e0b;
+  --color-beam-600: #d97706;
+  --color-beam-700: #b45309;
+
+  --color-sea-50: #f0fdfa;
+  --color-sea-100: #ccfbf1;
+  --color-sea-200: #99f6e4;
+  --color-sea-300: #5eead4;
+  --color-sea-400: #2dd4bf;
+  --color-sea-500: #14b8a6;
+  --color-sea-600: #0d9488;
+  --color-sea-700: #0f766e;
+
+  --animate-fade-in: fade-in 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-beam-pulse: beam-pulse 2.5s ease-in-out infinite;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes beam-pulse {
+  0%, 100% {
+    opacity: 0.35;
+    filter: drop-shadow(0 0 2px rgba(245, 158, 11, 0.4));
+  }
+  50% {
+    opacity: 0.9;
+    filter: drop-shadow(0 0 8px rgba(245, 158, 11, 0.7));
+  }
+}
+
+/* Базовые стили */
+html {
+  scroll-behavior: smooth;
+}
+body {
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  background-color: var(--color-navy-50);
+}
+::selection {
+  background-color: var(--color-beam-100);
+  color: var(--color-navy-950);
+}
+
+/* Скроллбар в тон светлой темы */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-navy-200) transparent;
+}
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: var(--color-navy-200);
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: var(--color-navy-300);
+}
+
+/* Стеклянные эффекты (Glassmorphism) */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(241, 245, 249, 0.8);
+}
+
+.glass-header {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border-b: 1px solid rgba(226, 232, 240, 0.8);
+}
