@@ -33,10 +33,13 @@ const RUSSIAN_NEWS_DOMAINS = [
   'bfm.ru', 'expert.ru', 'rb.ru'
 ];
 
-/** Проверка доступности URL по HTTP (использует HTTP/1.1 и закрывает сокет сразу после заголовков). */
+/** Проверка доступности URL по HTTP (использует HTTP/1.1 и закрывает сокет сразу после заголовков, запрещая PDF). */
 function checkUrlAlive(url: string): Promise<boolean> {
   return new Promise((resolve) => {
     if (!url || !/^https?:\/\//i.test(url)) return resolve(false);
+
+    // Запрещаем PDF файлы по расширению в URL
+    if (/\.pdf($|\?)/i.test(url)) return resolve(false);
 
     let urlObj: URL;
     try {
@@ -60,8 +63,15 @@ function checkUrlAlive(url: string): Promise<boolean> {
       },
       (res) => {
         const statusCode = res.statusCode || 0;
+        const contentType = (res.headers['content-type'] || '').toLowerCase();
+
         // Уничтожаем запрос сразу после считывания заголовков, чтобы не скачивать все тело страницы
         req.destroy();
+
+        // Запрещаем PDF файлы по Content-Type
+        if (contentType.includes('application/pdf')) {
+          return resolve(false);
+        }
 
         if (statusCode >= 200 && statusCode < 400) {
           return resolve(true);
@@ -239,9 +249,11 @@ async function sourceCasesForBlock(
         RESULTS_PER_CELL,
         searchOptions
       );
-      if (results.length) {
-        searchByCluster.set(cl.id, results);
-        results.forEach((r) => allowedUrls.add(r.url));
+      // Исключаем PDF-документы из результатов поиска перед передачей в LLM
+      const nonPdfResults = results.filter((r) => !/\.pdf($|\?)/i.test(r.url));
+      if (nonPdfResults.length) {
+        searchByCluster.set(cl.id, nonPdfResults);
+        nonPdfResults.forEach((r) => allowedUrls.add(r.url));
       }
     }
   }
